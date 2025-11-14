@@ -1,0 +1,23 @@
+# Muhim xavfsizlik va muhit (Environment) fayllari
+.env
+.venv/             # Virtual muhit katalogi
+venv/              # Virtual muhit katalogi
+env/               # Virtual muhit katalogi
+
+# Python kompilyatsiya qilingan fayllari
+__pycache__/
+*.pyc
+*.o
+*.so
+
+# Veb-ramkalar va boshqa vositalar tomonidan yaratilgan fayllar/kataloglar
+db.sqlite3         # Agar Django ishlatilayotgan bo'lsa
+/media             # Yuklangan media fayllari
+/static_collected  # Django statik fayllar yig'indisi
+
+# IDE (Integrated Development Environment) konfiguratsiya fayllari
+.vscode/           # Visual Studio Code konfiguratsiyasi
+.idea/             # PyCharm/IntelliJ konfiguratsiyasi
+
+# Test va boshqa vaqtinchalik fayllar
+.pytest_cache/

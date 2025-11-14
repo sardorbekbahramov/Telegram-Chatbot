@@ -5,9 +5,8 @@ from google.genai import Client   # Correct Gemini import
 
 # ==============================================================
 # 1. API KEYS
-TELEGRAM_API_KEY = os.getenv("TELEGRAM_BOT_TOKEN", "8493395845:AAGjqeWHXuQWDAFUURsEEHhseH1IU6Rbpl0")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyDGKKlHiooeu5o34zre5Zms7S9mFwkHA3Y")
-
+TELEGRAM_API_KEY = os.getenv("TELEGRAM_BOT_TOKEN") 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not TELEGRAM_API_KEY:
     raise ValueError("❌ TELEGRAM_BOT_TOKEN environment variable is missing!")
 
@@ -121,5 +120,6 @@ def setup_webhook():
 
 with app.app_context():
     setup_webhook()
+
 
       
