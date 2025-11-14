@@ -8,8 +8,6 @@ from google.generativeai import Client # Google GenAI ni yangi import qilish usu
 app = Flask(__name__)
 
 # Render URL manzili uchun muhit o'zgaruvchisini olish
-# Render bu o'zgaruvchini avtomatik taqdim etadi
-# Agar yo'q bo'lsa, xato yuzaga keladi
 RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL") 
 
 # Loglarni sozlash
@@ -18,24 +16,33 @@ logger = logging.getLogger(__name__)
 
 # ===================================================
 # 1. KALITLAR VA INITSIAALIZATSIYA
-# Render'da .env kerak emas, chunki kalitlar Environment Variables dan olinadi
+# ===================================================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
 if not TELEGRAM_TOKEN or not GEMINI_KEY:
-    # Bu xato faqat lokalda yuz berishi kerak, Render'da kalitlar bo'ladi
     logger.error("❌ TELEGRAM_BOT_TOKEN yoki GEMINI_API_KEY topilmadi!")
-    # O'zgaruvchilarsiz ishlamasligi uchun dasturni to'xtatish
     exit(1)
 
 # Bot va Gemini initsializatsiyasi
 bot = telegram.Bot(token=TELEGRAM_TOKEN)
 gemini_client = Client(api_key=GEMINI_KEY)
-# ===================================================
 
 
 # ===================================================
-# 2. WEBHOOK FUNKSIYALARI
+# 2. SYSTEM PROMPT (Gemini uchun rol)
+# ===================================================
+MEDICAL_PROMPT = (
+    "You are a highly cautious and informative medical assistant. Your primary goal is to provide general, educational health information. "
+    "Keep your answers concise, clear, and focused on the main point. "
+    "You MUST start every response with a clear disclaimer: '❗️Disclaimer: I am an AI and cannot provide medical advice. Always consult a healthcare professional for diagnosis or treatment.' "
+    "Do not diagnose specific conditions or recommend specific treatments or dosages. "
+    "When answering, be factual, cite potential sources (e.g., 'studies suggest', 'common advice'), and focus on general well-being and symptom explanation."
+)
+
+
+# ===================================================
+# 3. WEBHOOK FUNKSIYALARI
 # ===================================================
 
 def setup_webhook():
@@ -44,16 +51,18 @@ def setup_webhook():
         logger.error("❌ RENDER_EXTERNAL_URL topilmadi. Webhook o'rnatilmadi.")
         return
 
-    # To'liq Webhook manzilini yaratish
     webhook_url = f"{RENDER_URL}/{TELEGRAM_TOKEN}"
 
     try:
-        # Webhookni o'rnatish
         is_set = bot.set_webhook(url=webhook_url)
         if is_set:
             logger.info(f"✅ Webhook muvaffaqiyatli o'rnatildi: {webhook_url}")
         else:
-            logger.error(f"❌ Webhookni o'rnatib bo'lmadi: {webhook_url}")
+            # Agar oldingi Webhook bo'lsa, uni avval o'chirib keyin qayta o'rnatish yaxshi
+            bot.delete_webhook()
+            is_set = bot.set_webhook(url=webhook_url)
+            if is_set:
+                 logger.info(f"✅ Webhook qayta o'rnatildi: {webhook_url}")
 
     except telegram.error.TelegramError as e:
         logger.error(f"❌ Telegram xatosi: {e}")
@@ -62,14 +71,12 @@ def setup_webhook():
 
 
 # ===================================================
-# 3. FLASK YO'LLARI (ROUTES)
+# 4. FLASK YO'LLARI (ROUTES)
 # ===================================================
 
 @app.route("/")
 def home():
-    """Serverning ishlashini tekshirish uchun asosiy manzil."""
-    # Webhookni bir marta ishga tushirish uchun
-    # RENDER_URL mavjud bo'lganda, bu funksiya serverning birinchi kirishida ham ishga tushadi
+    """Serverning ishlashini tekshirish uchun asosiy manzil va Webhookni o'rnatish."""
     setup_webhook()
     return "Medical Assistant Bot is Running. Webhook setup initiated!", 200
 
@@ -81,13 +88,37 @@ def webhook():
             # Kelgan JSON ma'lumotni Telegram Update obyektiga aylantirish
             update = telegram.Update.de_json(request.get_json(force=True), bot)
             
+            # Faqat xabar (message) turi mavjudligini tekshirish
+            if not update.message:
+                return "No message", 200
+
             chat_id = update.message.chat.id
             user_text = update.message.text
             
+            
+            # --- COMMAND HANDLER MANTIG'I (Siz so'ragan qism) ---
+            if user_text in ["/start", "/help"]:
+                if user_text == '/start':
+                    reply = (
+                        "👋 Hello! I am an AI assistant providing general information for medical questions. "
+                        "I use the Gemini model to answer your queries.\n\n"
+                        "❗️ Please remember to always consult a physician for any serious medical conditions or diagnosis."
+                    )
+                else:
+                    reply = (
+                        "ℹ️ I support the following commands:\n"
+                        "/start - Start the bot\n"
+                        "/help - Show this help message\n\n"
+                        "You can also send me any health-related question directly."
+                    )
+                bot.sendMessage(chat_id=chat_id, text=reply)
+                return "Command handled", 200
+
+            # --- MAIN MESSAGE HANDLER MANTIG'I ---
             # Foydalanuvchi yozuvini AI modeliga yuborish
-            # Gemini-1.5-flash modelidan foydalanish
             response = gemini_client.models.generate_content(
                 model='gemini-1.5-flash',
+                system_instruction=MEDICAL_PROMPT, # System Prompt qo'shildi!
                 contents=[user_text]
             )
             
@@ -100,16 +131,15 @@ def webhook():
             logger.error(f"❌ Telegram Webhook xatosi: {e}")
             return "Telegram Error", 500
         except Exception as e:
-            logger.error(f"❌ Webhookni qayta ishlashdagi xato: {e}")
+            logger.error(f"❌ Webhookni qayta ishlashdagi kutilmagan xato: {e}")
             return "Internal Error", 500
 
 # ===================================================
-# 4. ISHGA TUSHIRISH MANTIG'I
+# 5. LOKAL ISHGA TUSHIRISH (RENDER UCHUN KERAK EMAS)
 # ===================================================
-
-# Bu qism faqat lokal kompyuterda "python main.py" orqali ishga tushganda ishlaydi.
-# Render serveri gunicorn orqali app obyektini chaqiradi.
 if __name__ == "__main__":
-    # Lokal testda ham webhookni o'rnatish
-    setup_webhook()
+    # Lokal test uchun
+    # setup_webhook() ni izohga olib qo'ying, agar lokalda ishga tushirsangiz
+    # Uning o'rniga polling ishlatish tavsiya qilinadi
+    logger.warning("Lokalda ishga tushirish uchun Webhook sozlamalarini tekshiring!")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
