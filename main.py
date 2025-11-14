@@ -1,147 +1,125 @@
-import telebot
-from google import genai
 import os
+import telebot
 from flask import Flask, request
+from google.genai import Client   # Correct Gemini import
 
-# =========================================================================
-# 1. API KEYLAR VA WEBHOOK SOZLAMALARI
-# Environment Variables Render'dan olinadi, agar bo'lmasa, hardcoded qiymatlar ishlatiladi (faqat sinov uchun)
+# ==============================================================
+# 1. API KEYS
+TELEGRAM_API_KEY = os.getenv("TELEGRAM_BOT_TOKEN", "8493395845:AAGjqeWHXuQWDAFUURsEEHhseH1IU6Rbpl0")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyDGKKlHiooeu5o34zre5Zms7S9mFwkHA3Y")
 
-# Iltimos, keyingi deploy oldidan quyidagi zaxira kalitlarni (ikkinchi qismni) o'zgartiring!
-TELEGRAM_API_KEY = os.getenv("TELEGRAM_BOT_TOKEN", "8493395845:AAGjqeWHXuQWDAFUURsEEHhseH1IU6Rbpl0") 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyDGKKlHiooeu5o34zre5Zms7S9mFwkHA3Y") 
+if not TELEGRAM_API_KEY:
+    raise ValueError("❌ TELEGRAM_BOT_TOKEN environment variable is missing!")
 
-# Render bizga PORT va BASE_URL ni avtomatik beradi
-PORT = int(os.environ.get('PORT', '8443')) 
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL") 
+if not GEMINI_API_KEY:
+    raise ValueError("❌ GEMINI_API_KEY environment variable is missing!")
 
-# BASE_URL ni tekshirish shart emas, chunki u Render'da doim mavjud bo'ladi
-if not BASE_URL:
-    # Render'da ishlamasa, mahalliy sinov uchun False URL o'rnatamiz
-    WEBHOOK_URL = "http://127.0.0.1:8443/"
+# ==============================================================
+# 2. WEBHOOK SETTINGS
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
+PORT = int(os.getenv("PORT", 8443))
+
+if BASE_URL:
+    WEBHOOK_URL = BASE_URL.rstrip("/") + "/"   # Prevent double slashes
 else:
-    WEBHOOK_URL = BASE_URL + '/'
+    WEBHOOK_URL = None
 
-# =========================================================================
-# 2. JAVOBNI BO'LAKLARGA AJRATISH FUNKSIYASI 
-def split_message(text, max_length=4000):
-    parts = []
-    current_part = ""
-    sentences = text.split('. ')
-    for i, sentence in enumerate(sentences):
-        sentence = sentence.strip()
-        if not sentence: continue
-        sentence_with_delimiter = sentence + (". " if i < len(sentences) - 1 else "")
-        if len(current_part) + len(sentence_with_delimiter) > max_length:
-            if current_part: parts.append(current_part.strip())
-            current_part = sentence_with_delimiter
-            if len(current_part) > max_length:
-                # Agar bitta gap juda uzun bo'lsa, uni kesish
-                parts.append(current_part[:max_length] + "...")
-                current_part = ""
-            
-        else:
-            current_part += sentence_with_delimiter
-            
-    if current_part: parts.append(current_part.strip())
-    return parts
-
-# =========================================================================
-# 3. SYSTEM PROMPT 
+# ==============================================================
+# 3. SYSTEM PROMPT
 MEDICAL_PROMPT = (
-    "You are a highly cautious and informative medical assistant. Your primary goal is to provide general, educational health information. "
-    "Keep your answers concise, clear, and focused on the main point. "
-    "You MUST start every response with a clear disclaimer: '❗️Disclaimer: I am an AI and cannot provide medical advice. Always consult a healthcare professional for diagnosis or treatment.' "
-    "Do not diagnose specific conditions or recommend specific treatments or dosages. "
-    "When answering, be factual, cite potential sources (e.g., 'studies suggest', 'common advice'), and focus on general well-being and symptom explanation."
+    "❗️Disclaimer: I am an AI language model and cannot provide medical advice. "
+    "Always consult a licensed healthcare provider for diagnosis or treatment.\n\n"
+    "You are a cautious, safe medical assistant. Provide general educational "
+    "health information only. Do NOT diagnose diseases, do NOT recommend "
+    "specific medications, treatments, or dosages. Keep answers simple, accurate, "
+    "and focused on general well-being."
 )
 
-# =========================================================================
-# 4. BOT, GEMINI VA FLASK OBYEKTLARINI INITSIAALLASHTIRISH
-try:
-    # Flask app yaratish (Web Service uchun)
-    app = Flask(__name__)
-    bot = telebot.TeleBot(TELEGRAM_API_KEY, parse_mode=None)
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    
-except Exception as e:
-    # Agar initsializatsiya (masalan, API kaliti) xato bersa
-    print(f"Xato: Initsializatsiya muammosi: {e}")
-    # gunicorn'ga xato borligini bildirish uchun exit() qilib qo'yamiz.
-    exit(1)
+# ==============================================================
+# 4. INITIALIZE FLASK, TELEGRAM BOT, GEMINI CLIENT
+app = Flask(__name__)
+bot = telebot.TeleBot(TELEGRAM_API_KEY, parse_mode="HTML")  # HTML safe
+client = Client(api_key=GEMINI_API_KEY)
 
+# ==============================================================
+# 5. SPLIT LONG MESSAGES (Telegram's 4096 char limit)
+def split_message(text, max_length=4000):
+    parts = []
+    while len(text) > max_length:
+        split_at = text.rfind(". ", 0, max_length)
+        if split_at == -1:
+            split_at = max_length
+        parts.append(text[:split_at])
+        text = text[split_at:].lstrip()
+    parts.append(text)
+    return parts
 
-# =========================================================================
-# 5. WEBHOOK HANDLER (Telegramdan kelgan xabarni ushlovchi)
-
-@app.route('/', methods=['POST'])
+# ==============================================================
+# 6. WEBHOOK ENDPOINT (Telegram → POST)
+@app.route("/", methods=["GET", "POST"])
 def webhook():
-    # Faqat Telegramdan kelgan JSON formatdagi so'rovlarni qabul qilish
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
+    if request.method == "GET":
+        return "Bot is running!", 200
+
+    if request.headers.get("content-type") == "application/json":
+        data = request.get_data().decode("utf-8")
+        update = telebot.types.Update.de_json(data)
         bot.process_new_updates([update])
-        return '!', 200 # Muvaffaqiyatli qabul qilinganini bildirish
-    else:
-        # JSON emasmi? Rad etamiz.
-        return '', 403
+        return "OK", 200
 
-# =========================================================================
-# 6. COMMAND HANDLERS 
-@bot.message_handler(commands=['start', 'help'])
+    return "Forbidden", 403
+
+# ==============================================================
+# 7. COMMAND HANDLERS
+@bot.message_handler(commands=["start", "help"])
 def handle_commands(message):
-    if message.text == '/start':
-        response_text = "Hello! I am an AI assistant providing general information for medical questions. Please remember to always consult a physician for any serious medical conditions or diagnosis."
-    else:
-        response_text = "I support the following commands:\n/start - Start the bot\n/help - Show this help message\nYou can also send me any medical question directly."
-    bot.reply_to(message, response_text)
+    bot.reply_to(
+        message,
+        "👋 Hello!\n"
+        "I am an AI assistant that provides *general* health information.\n\n"
+        "❗️For real medical problems or symptoms, always consult a doctor."
+    )
 
-# =========================================================================
-# 7. MESSAGE HANDLER (GEMINI LOGIC) 
-@bot.message_handler(func=lambda message: True)
-def handle_all_messages(message):
-    user_question = message.text
-    # Bot 'typing' (yozmoqda) statusini ko'rsatish
-    bot.send_chat_action(message.chat.id, 'typing') 
-    
+# ==============================================================
+# 8. MAIN MESSAGE HANDLER (Gemini response)
+@bot.message_handler(func=lambda msg: True)
+def handle_user_message(message):
+    user_text = message.text
+    bot.send_chat_action(message.chat.id, "typing")
+
     try:
+        # Correct Gemini 2.5 API format
         response = client.models.generate_content(
-            model='gemini-2.5-flash', 
-            contents=[user_question],
-            config={"system_instruction": MEDICAL_PROMPT} 
+            model="gemini-2.5-flash",
+            system_instruction=MEDICAL_PROMPT,
+            contents=[
+                {
+                    "role": "user",
+                    "parts": [{"text": user_text}]
+                }
+            ]
         )
-        ai_answer = response.text
-        message_parts = split_message(ai_answer)
-        for part in message_parts:
-            bot.send_message(message.chat.id, part)
+
+        answer = response.text
+        chunks = split_message(answer)
+
+        for chunk in chunks:
+            bot.send_message(message.chat.id, chunk)
 
     except Exception as e:
-        # API xatoliklarini foydalanuvchiga yuborish
-        error_text = f"Uzr, Gemini API xatosi yuz berdi: {e}"
-        if len(error_text) > 4000:
-            error_text = error_text[:3990] + "..."
-        bot.reply_to(message, error_text)
+        bot.send_message(message.chat.id, f"❌ Gemini API error:\n{e}")
 
+# ==============================================================
+# 9. SETUP WEBHOOK
+def setup_webhook():
+    bot.remove_webhook()
+    if WEBHOOK_URL:
+        bot.set_webhook(url=WEBHOOK_URL)
+        print("Webhook set to:", WEBHOOK_URL)
+    else:
+        print("No webhook URL detected. Use polling for local testing.")
 
-# =========================================================================
-# 8. ASOSIY ISHGA TUSHIRISH MANTIG'I (Tuzatilgan)
-
-def set_webhook():
-    """Telegram APIga Webhook URL'ini o'rnatadi."""
-    try:
-        # Agar BASE_URL mavjud bo'lsa (Render'da ishlayotgan bo'lsa)
-        if BASE_URL:
-            bot.set_webhook(url=WEBHOOK_URL)
-            print(f"Webhook muvaffaqiyatli o'rnatildi: {WEBHOOK_URL}")
-        else:
-            # Mahalliy sinov uchun bot.set_webhook() o'rniga Polling ishlatish mumkin
-            print("Webhook o'rnatilmadi (BASE_URL yo'q). Mahalliy test uchun Polling kerak.")
-            
-    except Exception as e:
-        print(f"Webhook o'rnatishda xato: {e}")
-        
-# Gunicorn bu kodni import qilganda, u set_webhook() funksiyasini chaqirishi kerak.
-# Flask app.app_context() orqali buni kafolatlaymiz.
 with app.app_context():
-    set_webhook()
-    print("Bot muvaffaqiyatli ishga tushdi va Webhook so'rovlarini kutmoqda.")
+    setup_webhook()
+
+      
