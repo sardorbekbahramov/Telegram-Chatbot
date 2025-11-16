@@ -1,6 +1,11 @@
-Flask[async]>=2.3
-gunicorn
-python-telegram-bot>=22.0
-python-dotenv
-google-genai
+# Telegram bot token
+TELEGRAM_BOT_TOKEN=8493395845:AAGjqeWHXuQWDAFUURsEEHhseH1IU6Rbpl0
 
+# Agar boshqa API kerak bo‘lsa
+GEMINI_API_KEY=AIzaSyDGKKlHiooeu5o34zre5Zms7S9mFwkHA3Y
+
+# Render Free URL, avtomatik server beradi
+RENDER_EXTERNAL_URL=https://telegram-chatbot-qou1.onrender.com
+
+# Port (Render avtomatik beradi)
+PORT=10000

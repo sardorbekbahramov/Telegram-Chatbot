@@ -1,27 +1,28 @@
 import os
 from flask import Flask, request
 from telegram import Bot, Update
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, filters
+from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters
 
 app = Flask(__name__)
 
+# ===== Telegram token =====
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     raise ValueError("❌ TELEGRAM_BOT_TOKEN environment variable not set!")
 
 bot = Bot(token=TOKEN)
-dispatcher = Dispatcher(bot, None, workers=0)  # sync mode
+dispatcher = Dispatcher(bot, None, workers=0)  # workers=0 sync ishlatish uchun
 
 # ===== Handlers =====
 def start(update, context):
-    update.message.reply_text("Hello! The bot is online and working.")
+    update.message.reply_text("Hello! Bot ishlayapti ✅")
 
 def echo(update, context):
     text = update.message.text
-    update.message.reply_text(f"You said: {text}")
+    update.message.reply_text(f"Siz shunday yozdingiz: {text}")
 
 dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, echo))
 
 # ===== Webhook =====
 @app.route("/webhook", methods=["POST"])
@@ -39,11 +40,13 @@ def home():
 def set_webhook():
     render_url = os.getenv("RENDER_EXTERNAL_URL")
     if not render_url:
-        raise ValueError("❌ RENDER_EXTERNAL_URL missing in environment variables!")
+        raise ValueError("❌ RENDER_EXTERNAL_URL missing!")
     webhook_url = f"{render_url}/webhook"
+    bot.delete_webhook()
     bot.set_webhook(webhook_url)
-    print(f"✅ Webhook has been set: {webhook_url}")
+    print(f"✅ Webhook o‘rnatildi: {webhook_url}")
 
 if __name__ == "__main__":
     set_webhook()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
